@@ -38,12 +38,12 @@
 
 /* Windows Specific */
 #ifdef _WIN32
-#if (_MSC_VER >= 1700) /* Visual Studio 2012 Onwards */
+#if (_MSC_VER >= 1800) /* Visual Studio 2013 Onwards */
 #include <immintrin.h>
 #include <string.h>
 #else
-#error Microsoft compiler started supporting RDRAND
-#error instructions from 2012 version and onwards
+#error Microsoft compiler started supporting RDSEED
+#error instructions from 2013 version and onwards
 #endif
 /* Windows */
 /* GNUC Specific */
@@ -55,8 +55,6 @@
 #include <stdint.h>
 #include <string.h>
 /* GNUC */
-#elif __clang__
-#define USING_CLANG 1
 #else
 #error Your compiler is not supported currently
 #error if you port to another compiler, please
@@ -86,185 +84,105 @@
 
 
 #if USING_GCC
-       // asm volatile(".byte 0x48; .byte 0x0f; .byte 0xc7; .byte 0xf0; setc %1":"=a"(rando), "=qm"(err));
-# define _rdrand64_step(x) ({ unsigned char err; asm volatile(".byte 0x48; .byte 0x0f; .byte 0xc7; .byte 0xf0; setc %1":"=a"(x), "=qm"(err)); err; })
-# define _rdrand32_step(x) ({ unsigned char err; asm volatile(".byte 0x0f; .byte 0xc7; .byte 0xf0; setc %1":"=a"(x), "=qm"(err)); err; })
-#elif USING_CLANG
-        //asm("rdrandq %0;\n\t" "setc %1" :"=a"(rando),"=qm"(err) : :);
-# define _rdrand64_step(x) ({ unsigned char err; asm("rdrandq %0;\n\t" "setc %1" :"=a"(x),"=qm"(err) : :); err; })
-# define _rdrand32_step(x) ({ unsigned char err; asm("rdrandw %0;\n\t" "setc %1" :"=a"(x),"=qm"(err) : :); err; })
+# define _rdseed64_step(x) ({ unsigned char err; asm volatile(".byte 0x48; .byte 0x0f; .byte 0xc7; .byte 0xf8; setc %1":"=a"(x), "=qm"(err)); err; })
+# define _rdseed32_step(x) ({ unsigned char err; asm volatile(".byte 0x0f; .byte 0xc7; .byte 0xf8; setc %1":"=a"(x), "=qm"(err)); err; })
 #endif
 
 
 
 uint64_t get_bits(void);
-int RdRand_cpuid(void);
+int RdSeed_cpuid(void);
 
-PyDoc_STRVAR(module_doc, "rdrand: Python interface to intel hardware rng\n");
+PyDoc_STRVAR(module_doc, "rdseed: Python interface to intel hardware rng\n");
 
-/*! \brief Queries cpuid to see if rdrand is supported
+/*! \brief Queries cpuid to see if rdseed is supported
  *
- * rdrand support in a CPU is determined by examining the 30th bit of the ecx
+ * rdseed support in a CPU is determined by examining the 30th bit of the ecx
  * register after calling cpuid.
  *
- * \return bool of whether or not rdrand is supported
+ * \return bool of whether or not rdseed is supported
  */
 
 /*! \def RDRAND_MASK
  *    The bit mask used to examine the ecx register returned by cpuid. The
  *   30th bit is set.
  */
-#define RDRAND_MASK   0x40000000
+#define RDSEED_MASK   0x40000
 
 #ifdef __GNUC__
 # define __cpuid(x,y,z) asm volatile("cpuid":"=a"(x[0]),"=b"(x[1]),"=c"(x[2]),"=d"(x[3]):"a"(y),"c"(z))
 #endif
 
 int 
-RdRand_cpuid()
+RdSeed_cpuid()
 {
-	unsigned int info[4] = {-1, -1, -1, -1};
 	/* Are we on an Intel processor? */
+	unsigned int info[4] = { -1, -1, -1, -1 };
 #ifdef _WIN32
 	__cpuid(info, /*feature bits*/0);
 #endif
+
 #ifdef __GNUC__
 	__cpuid(info, /*feature bits*/0, 0);
 #endif
-	if ( memcmp((void *) &info[1], (void *) "Genu", 4) != 0 ||
-		 memcmp((void *) &info[3], (void *) "ineI", 4) != 0 ||
-		 memcmp((void *) &info[2], (void *) "ntel", 4) != 0 ) {
+	if (memcmp((void *)&info[1], (void *) "Genu", 4) != 0 ||
+	    memcmp((void *)&info[3], (void *) "ineI", 4) != 0 ||
+	    memcmp((void *)&info[2], (void *) "ntel", 4) != 0) {
 		return 0;
 	}
-	/* Do we have RDRAND? */
+
+	/* Do we have RDSEED? */
+	unsigned int info_rdseed[4] = { -1, -1, -1, -1 };
 #ifdef _WIN32
-	__cpuid(info, /*feature bits*/1);
+	__cpuid(info_rdseed, /*feature bits*/7);
 #endif
+
 #ifdef __GNUC__
-	__cpuid(info, /*feature bits*/1, 0);
+	__cpuid(info_rdseed, /*feature bits*/7, 0);
 #endif
-	 unsigned int ecx = info[2];
-	 if ((ecx & RDRAND_MASK) == RDRAND_MASK)
-		 return 1;
-	 else
-		 return 0;
+	unsigned int ebx = info_rdseed[1];
+	if ((ebx & RDSEED_MASK) == RDSEED_MASK)
+		return 1;
+	else
+		return 0;
 }
 
-
-/*
-void
-cpuid(unsigned int op, unsigned int reg[4])
-{
-
-#if USING_GCC && IS64BIT
-    __cpuid(reg, op);
-#else
-    asm volatile("pushl %%ebx      \n\t" // save %ebx 
-                 "cpuid            \n\t"
-                 "movl %%ebx, %1   \n\t" // save what cpuid just put in %ebx 
-                 "popl %%ebx       \n\t" // restore the old %ebx 
-                 : "=a"(reg[0]), "=r"(reg[1]), "=c"(reg[2]), "=d"(reg[3])
-                 : "a"(op)
-                 : "cc");
-#endif
-}
-
-int
-RdRand_cpuid(void)
-{
-    unsigned int info[4] = {-1, -1, -1, -1};
-
-    // Are we on an Intel processor? 
-    cpuid(0, info);
-
-    if ( memcmp((void *) &info[1], (void *) "Genu", 4) != 0 ||
-        memcmp((void *) &info[3], (void *) "ineI", 4) != 0 ||
-        memcmp((void *) &info[2], (void *) "ntel", 4) != 0 )
-        return 0;
-
-    // Do we have RDRAND? 
-    cpuid(1, info);
-
-    int ecx = info[2];
-    if ((ecx & RDRAND_MASK) == RDRAND_MASK)
-        return 1;
-    else
-        return 0;
-}
-*/
 
 #if IS64BIT
 //utility to return 64 random bits
 uint64_t
 get_bits(void)
 {
-    unsigned long int rando = 0;
-    //unsigned char err = 0;
-
-    // Yes, this is inline assembly.
-    // should never really fail, may have
-    // to reexamine for future versions
-//    do
-//    {
-//#if USING_GCC
-//        asm volatile(".byte 0x48; .byte 0x0f; .byte 0xc7; .byte 0xf0; setc %1":"=a"(rando), "=qm"(err));
-//#elif USING_CLANG
-//        asm("rdrandq %0;\n\t" "setc %1" :"=a"(rando),"=qm"(err) : :);
-//#endif
-//
-//    } while (err == 0);
-    while(! _rdrand64_step(rando));
-    return rando;
+    unsigned long int seed = 0;
+    while(! _rdseed64_step(seed));	
+    return seed;
 }
 #elif IS32BIT
 uint64_t
 get_bits(void)
 {
-    //unsigned char err = 0;
     union{
-       uint64_t rando;
+       uint64_t seed;
        struct {
-          uint32_t rando1;
-          uint32_t rando2;
+          uint32_t seed1;
+          uint32_t seed2;
        } i;
     } un;
 
-   while(! _rdrand32_step(un.i.rando1));
-   while(! _rdrand32_step(un.i.rando2));
+   while(! _rdseed32_step(un.i.seed1));
+   while(! _rdseed32_step(un.i.seed2));
 
-    // Yes, this is inline assembly.
-    // should never really fail, may have
-    // to reexamine for future versions
-/*
-    do
-    {
-#if USING_GCC
-        asm volatile(".byte 0x0f; .byte 0xc7; .byte 0xf0; setc %1":"=a"(un.i.rando1), "=qm"(err));
-#elif USING_CLANG
-        asm("rdrandw %0;\n\t" "setc %1" :"=a"(un.i.rando1),"=qm"(err) : :);
-#endif
-    } while (err == 0);
-
-    do
-    {
-#if USING_GCC
-        asm volatile(".byte 0x0f; .byte 0xc7; .byte 0xf0; setc %1":"=a"(un.i.rando2), "=qm"(err));
-#elif USING_CLANG
-        asm("rdrandw %0;\n\t" "setc %1" :"=a"(un.i.rando2),"=qm"(err) : :);
-#endif
-    } while (err == 0);
-*/
-    return un.rando;
+    return un.seed;
 }
 #endif
 
 static PyObject *
-rdrand_get_bits(PyObject *self, PyObject *args)
+rdseed_get_bits(PyObject *self, PyObject *args)
 {
     int num_bits, num_bytes, i;
     int num_quads, num_chars;
     unsigned char * data = NULL;
-    uint64_t rando;
+    uint64_t seed;
     unsigned char last_mask, lm_shift;
     PyObject *result;
 
@@ -296,14 +214,14 @@ rdrand_get_bits(PyObject *self, PyObject *args)
 
     for(i = 0; i < num_quads; i++)
     {
-        rando = get_bits();
-        bcopy((char*)&rando, &data[i * 8], 8);
+        seed = get_bits();
+        bcopy((char*)&seed, &data[i * 8], 8);
     }
 
     if(num_chars)
     {
-        rando = get_bits();
-        bcopy((char*)&rando, &data[num_quads * 8], num_chars);
+        seed = get_bits();
+        bcopy((char*)&seed, &data[num_quads * 8], num_chars);
     }
 
     if (lm_shift != 0)
@@ -316,12 +234,12 @@ rdrand_get_bits(PyObject *self, PyObject *args)
 }
 
 static PyObject *
-rdrand_get_bytes(PyObject *self, PyObject *args)
+rdseed_get_bytes(PyObject *self, PyObject *args)
 {
     int num_bytes, i;
     int num_quads, num_chars;
     unsigned char * data = NULL;
-    uint64_t rando;
+    uint64_t seed;
     PyObject *result;
 
     if ( !PyArg_ParseTuple(args, "i", &num_bytes) )
@@ -345,14 +263,14 @@ rdrand_get_bytes(PyObject *self, PyObject *args)
 
     for(i = 0; i < num_quads; i++)
     {
-        rando = get_bits();
-        bcopy((char*)&rando, &data[i * 8], 8);
+        seed = get_bits();
+        bcopy((char*)&seed, &data[i * 8], 8);
     }
 
     if(num_chars)
     {
-        rando = get_bits();
-        bcopy((char*)&rando, &data[num_quads * 8], num_chars);
+        seed = get_bits();
+        bcopy((char*)&seed, &data[num_quads * 8], num_chars);
     }
 
     /* Probably hosing byte order. big deal it's hardware random, has no meaning til we assign it */
@@ -365,49 +283,49 @@ rdrand_get_bytes(PyObject *self, PyObject *args)
     return result;
 }
 
-static PyMethodDef rdrand_functions[] = {
-        {"rdrand_get_bits",       rdrand_get_bits,        METH_VARARGS, "rdrand_get_bits()"},
-        {"rdrand_get_bytes",      rdrand_get_bytes,       METH_VARARGS, "rdrand_get_bytes()"},
+static PyMethodDef rdseed_functions[] = {
+        {"rdseed_get_bits",       rdseed_get_bits,        METH_VARARGS, "rdseed_get_bits()"},
+        {"rdseed_get_bytes",      rdseed_get_bytes,       METH_VARARGS, "rdseed_get_bytes()"},
         {NULL, NULL, 0, NULL}   /* Sentinel */
 };
 
 #if PYTHON2 == 1
 PyMODINIT_FUNC
-init_rdrand(void)
+init_rdseed(void)
 {
         PyObject *m;
 
-        // I need to verify that cpu type can do rdrand
-        if (RdRand_cpuid() != 1)
+        // I need to verify that cpu type can do rdseed
+        if (RdSeed_cpuid() != 1)
         {
             PyErr_SetString(PyExc_SystemError,
-                        "CPU doesn't have random number generator");
+                        "CPU doesn't have random seed generator");
             return;
         }
 
-        m = Py_InitModule3("_rdrand", rdrand_functions, module_doc);
+        m = Py_InitModule3("_rdseed", rdseed_functions, module_doc);
         if (m == NULL)
             return;
 }
 #else
-static struct PyModuleDef rdrandmodule = {
-   PyModuleDef_HEAD_INIT, "_rdrand", module_doc, -1, rdrand_functions
+static struct PyModuleDef rdseedmodule = {
+   PyModuleDef_HEAD_INIT, "_rdseed", module_doc, -1, rdseed_functions
 };
 
 PyMODINIT_FUNC
-PyInit__rdrand(void)
+PyInit__rdseed(void)
 {
         PyObject *m;
 
-        // I need to verify that cpu type can do rdrand
-        if (RdRand_cpuid() != 1)
+        // I need to verify that cpu type can do rdseed
+        if (RdSeed_cpuid() != 1)
         {
             PyErr_SetString(PyExc_SystemError,
-                        "CPU doesn't have random number generator");
+                        "CPU doesn't have random seed generator");
             return NULL;
         }
 
-        m = PyModule_Create(&rdrandmodule);
+        m = PyModule_Create(&rdseedmodule);
         if (m == NULL)
             return NULL;
 

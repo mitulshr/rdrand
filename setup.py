@@ -1,6 +1,6 @@
 from distutils.core import setup, Extension
 
-setup(name='rdrand',
+setup(name='drng',
       version='1.0.1',
       description="Python interface to Intel hardware rng",
       long_description= "".join(open('rdrandom.rst').readlines()),
@@ -8,8 +8,8 @@ setup(name='rdrand',
       author_email="stillson@gmail.com",
       url='https://github.com/stillson/rdrand',
       license="New BSD license",
-      ext_modules=[Extension('_rdrand', ['rdrand.c'])],
-      py_modules = ['rdrand',],
+      ext_modules=[Extension('_rdrand', ['rdrand.c']),Extension('_rdseed', ['rdseed.c'])],
+      py_modules = ['rdrand','rdseed',],
       keywords = ["intel","hardware","random","number","generator","rng"],
       data_files=[('share', ['rdrandom.rst'])],
       classifiers = ["Development Status :: 4 - Beta",
