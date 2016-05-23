@@ -36,6 +36,33 @@
 #define IS32BIT 1
 #endif
 
+/* Windows Specific */
+#ifdef _WIN32
+#if (_MSC_VER >= 1700) /* Visual Studio 2012 Onwards */
+#include <immintrin.h>
+#include <string.h>
+#else
+#error Microsoft compiler started supporting RDRAND
+#error instructions from 2012 version and onwards
+/* Windows */
+/* GNUC Specific */
+#elif __GNUC__
+#ifdef __INTEL_COMPILER
+# include <immintrin.h>
+#endif
+#define USING_GCC 1
+#include <stdint.h>
+#include <string.h>
+/* GNUC */
+#elif __clang__
+#define USING_CLANG 1
+#else
+#error Your compiler is not supported currently
+#error if you port to another compiler, please
+#error send back the patch to https://github.com/stillson/rdrand
+#endif
+
+/*
 #ifdef __GNUC__
 #define USING_GCC 1
 #elif __clang__
@@ -45,6 +72,7 @@
 #error if you port to another compiler, please
 #error send back the patch to https://github.com/stillson/rdrand
 #endif
+*/
 
 #if PY_MAJOR_VERSION == 2
 #define PYTHON2 1
@@ -53,6 +81,20 @@
 #else
 #error requires python 2 or 3
 #endif
+
+
+
+#if USING_GCC
+       // asm volatile(".byte 0x48; .byte 0x0f; .byte 0xc7; .byte 0xf0; setc %1":"=a"(rando), "=qm"(err));
+# define _rdrand64_step(x) ({ unsigned char err; asm volatile(".byte 0x48; .byte 0x0f; .byte 0xc7; .byte 0xf0; setc %1":"=a"(*x), "=qm"(err)); err; })
+# define _rdrand32_step(x) ({ unsigned char err; asm volatile(".byte 0x0f; .byte 0xc7; .byte 0xf0; setc %1":"=a"(*x), "=qm"(err)); err; })
+#elif USING_CLANG
+        //asm("rdrandq %0;\n\t" "setc %1" :"=a"(rando),"=qm"(err) : :);
+# define _rdrand64_step(x) ({ unsigned char err; asm("rdrandq %0;\n\t" "setc %1" :"=a"(*x),"=qm"(err) : :); err; })
+# define _rdrand32_step(x) ({ unsigned char err; asm("rdrandw %0;\n\t" "setc %1" :"=a"(*x),"=qm"(err) : :); err; })
+#endif
+
+
 
 uint64_t get_bits(void);
 int RdRand_cpuid(void);
@@ -73,8 +115,42 @@ PyDoc_STRVAR(module_doc, "rdrand: Python interface to intel hardware rng\n");
  */
 #define RDRAND_MASK   0x40000000
 
-# define __cpuid(x,y) asm("cpuid":"=a"(x[0]),"=b"(x[1]),"=c"(x[2]),"=d"(x[3]):"a"(y))
+#ifdef __GNUC__
+# define __cpuid(x,y,z) asm volatile("cpuid":"=a"(x[0]),"=b"(x[1]),"=c"(x[2]),"=d"(x[3]):"a"(y),"c"(z))
+#endif
 
+int 
+RdRand_cpuid()
+{
+	unsigned int info[4] = {-1, -1, -1, -1};
+	/* Are we on an Intel processor? */
+#ifdef _WIN32
+	__cpuid(info, /*feature bits*/0);
+#endif
+#ifdef __GNUC__
+	__cpuid(info, /*feature bits*/0, 0);
+#endif
+	if ( memcmp((void *) &info[1], (void *) "Genu", 4) != 0 ||
+		 memcmp((void *) &info[3], (void *) "ineI", 4) != 0 ||
+		 memcmp((void *) &info[2], (void *) "ntel", 4) != 0 ) {
+		return 0;
+	}
+	/* Do we have RDRAND? */
+#ifdef _WIN32
+	__cpuid(info, /*feature bits*/1);
+#endif
+#ifdef __GNUC__
+	__cpuid(info, /*feature bits*/1, 0);
+#endif
+	 unsigned int ecx = info[2];
+	 if ((ecx & RDRAND_MASK) == RDRAND_MASK)
+		 return 1;
+	 else
+		 return 0;
+}
+
+
+/*
 void
 cpuid(unsigned int op, unsigned int reg[4])
 {
@@ -82,10 +158,10 @@ cpuid(unsigned int op, unsigned int reg[4])
 #if USING_GCC && IS64BIT
     __cpuid(reg, op);
 #else
-    asm volatile("pushl %%ebx      \n\t" /* save %ebx */
+    asm volatile("pushl %%ebx      \n\t" // save %ebx 
                  "cpuid            \n\t"
-                 "movl %%ebx, %1   \n\t" /* save what cpuid just put in %ebx */
-                 "popl %%ebx       \n\t" /* restore the old %ebx */
+                 "movl %%ebx, %1   \n\t" // save what cpuid just put in %ebx 
+                 "popl %%ebx       \n\t" // restore the old %ebx 
                  : "=a"(reg[0]), "=r"(reg[1]), "=c"(reg[2]), "=d"(reg[3])
                  : "a"(op)
                  : "cc");
@@ -97,7 +173,7 @@ RdRand_cpuid(void)
 {
     unsigned int info[4] = {-1, -1, -1, -1};
 
-    /* Are we on an Intel processor? */
+    // Are we on an Intel processor? 
     cpuid(0, info);
 
     if ( memcmp((void *) &info[1], (void *) "Genu", 4) != 0 ||
@@ -105,7 +181,7 @@ RdRand_cpuid(void)
         memcmp((void *) &info[2], (void *) "ntel", 4) != 0 )
         return 0;
 
-    /* Do we have RDRAND? */
+    // Do we have RDRAND? 
     cpuid(1, info);
 
     int ecx = info[2];
@@ -114,6 +190,7 @@ RdRand_cpuid(void)
     else
         return 0;
 }
+*/
 
 #if IS64BIT
 //utility to return 64 random bits
@@ -121,29 +198,29 @@ uint64_t
 get_bits(void)
 {
     unsigned long int rando = 0;
-    unsigned char err = 0;
+    //unsigned char err = 0;
 
     // Yes, this is inline assembly.
     // should never really fail, may have
     // to reexamine for future versions
-    do
-    {
-#if USING_GCC
-        asm volatile(".byte 0x48; .byte 0x0f; .byte 0xc7; .byte 0xf0; setc %1":"=a"(rando), "=qm"(err));
-
-#elif USING_CLANG
-        asm("rdrandq %0;\n\t" "setc %1" :"=a"(rando),"=qm"(err) : :);
-#endif
-
-    } while (err == 0);
-
+//    do
+//    {
+//#if USING_GCC
+//        asm volatile(".byte 0x48; .byte 0x0f; .byte 0xc7; .byte 0xf0; setc %1":"=a"(rando), "=qm"(err));
+//#elif USING_CLANG
+//        asm("rdrandq %0;\n\t" "setc %1" :"=a"(rando),"=qm"(err) : :);
+//#endif
+//
+//    } while (err == 0);
+    // @ToDo: Put this in the loop to make sure it does not fail
+    while(_rdrand64_step(rando));	
     return rando;
 }
 #elif IS32BIT
 uint64_t
 get_bits(void)
 {
-    unsigned char err = 0;
+    //unsigned char err = 0;
     union{
        uint64_t rando;
        struct {
@@ -152,9 +229,13 @@ get_bits(void)
        } i;
     } un;
 
+   while(_rdrand32_step(un.i.rando1));
+   while(_rdrand32_step(un.i.rando2));
+
     // Yes, this is inline assembly.
     // should never really fail, may have
     // to reexamine for future versions
+/*
     do
     {
 #if USING_GCC
@@ -172,7 +253,7 @@ get_bits(void)
         asm("rdrandw %0;\n\t" "setc %1" :"=a"(un.i.rando2),"=qm"(err) : :);
 #endif
     } while (err == 0);
-
+*/
     return un.rando;
 }
 #endif
