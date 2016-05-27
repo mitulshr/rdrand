@@ -63,9 +63,7 @@
 #endif
 
 /*
-#ifdef __GNUC__
-#define USING_GCC 1
-#elif __clang__
+#if __clang__
 #define USING_CLANG 1
 #else
 #error Only support for gcc or clang currently
