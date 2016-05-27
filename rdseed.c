@@ -31,6 +31,7 @@
 #include <Python.h>
 
 #define MAX_RETRY 100
+
 #ifdef _LP64
 #define IS64BIT 1
 #else
@@ -64,6 +65,9 @@
 
 /*
 #if __clang__
+#ifdef __GNUC__
+#define USING_GCC 1
+#elif __clang__
 #define USING_CLANG 1
 #else
 #error Only support for gcc or clang currently
@@ -221,7 +225,9 @@ rdseed_get_bits(PyObject *self, PyObject *args)
     if ( !PyArg_ParseTuple(args, "i|i", &num_bits, &not_force) )
         return NULL;
 
-    
+    if ( !PyArg_ParseTuple(args, "i", &num_bits) )
+        return NULL;
+
     if (num_bits <= 0)
     {
         PyErr_SetString(PyExc_ValueError, "number of bits must be greater than zero");
@@ -234,7 +240,6 @@ rdseed_get_bits(PyObject *self, PyObject *args)
         return NULL;
     }
 
-    
     num_bytes   = num_bits / 8;
     lm_shift    = num_bits % 8;
     last_mask   = 0xff >> (8 - lm_shift);
